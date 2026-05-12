@@ -1,0 +1,201 @@
+# SkillSphere LMS - System Architecture & Design
+
+This document outlines the high-level architecture, database schema, folder structure, and API routes for the SkillSphere LMS platform as requested.
+
+## 1. Full System Architecture
+
+The application follows a scalable multi-tier REST API architecture using the MERN stack (MongoDB, Express, React, Node.js), securely handling media assets through an external provider.
+
+- **Frontend (Client)**: React.js application booted with Vite. It handles the UI, client-side routing, and state management. Tailwind CSS provides the styling, matching the "light green premium theme" requirement.
+- **Backend (Server)**: Node.js running an Express server. It handles business logic, authorization, request validation, and interacts with external services.
+- **Database**: MongoDB (via Mongoose), utilizing relations and schema validation.
+- **Media & Storage**: Cloudinary to act as a secure CDN for storing and streaming video lessons, as well as handling image assets (thumbnails, PDFs).
+- **Authentication**: JWT-based stateless authentication with `bcrypt` for secure server-side password hashing.
+
+```mermaid
+flowchart TD
+    subgraph Frontend [Client Tier - React + Vite + Tailwind]
+        UI[UI/UX Premium Theme]
+        Components[React Components]
+        State[State Management / API Fetching]
+    end
+
+    subgraph External [External Services]
+        Cloudinary[(Cloudinary\nVideo / File Storage)]
+    end
+
+    subgraph Backend [Server Tier - Node + Express]
+        API[Express REST API]
+        Auth[JWT Auth Middleware]
+        Controllers[Controllers / Business Logic]
+        Services[Services]
+    end
+    
+    subgraph Database [Data Tier - MongoDB]
+        Mongoose[(MongoDB Database)]
+    end
+
+    UI --> Components
+    Components --> State
+    State -- HTTP/REST --> API
+    API --> Auth
+    Auth --> Controllers
+    Controllers --> Services
+    Services -- Mongoose ORM --> Mongoose
+    Services -- Upload Video/Image/PDF --> Cloudinary
+```
+
+## 2. Database Schema
+
+The database consists of the following core collections, utilizing references (`ObjectId`) for scalability.
+
+### User Collection
+- `_id`: ObjectId
+- `name`: String
+- `email`: String (Unique, Indexed)
+- `password`: String (Hashed via bcrypt)
+- `role`: Enum ['student', 'mentor', 'admin']
+- `favoriteMentors`: [ObjectId(User)]
+- `certificates`: [Object (CourseId, URL, IssueDate)]
+- `timestamps`: true
+
+### Course Collection
+- `_id`: ObjectId
+- `title`: String
+- `description`: String
+- `mentor`: ObjectId(User)
+- `thumbnailUrl`: String (Cloudinary URL)
+- `price`: Number
+- `status`: Enum ['draft', 'published']
+- `studentCount`: Number
+- `averageRating`: Number
+- `timestamps`: true
+
+### Section Collection
+- `_id`: ObjectId
+- `course`: ObjectId(Course)
+- `title`: String
+- `order`: Number
+- `timestamps`: true
+
+### Lesson Collection
+- `_id`: ObjectId
+- `section`: ObjectId(Section)
+- `title`: String
+- `type`: Enum ['video', 'pdf', 'text']
+- `videoUrl`: String (Cloudinary URL - if video)
+- `pdfUrl`: String (Cloudinary URL - if notes)
+- `content`: String (if text)
+- `duration`: Number (in minutes)
+- `order`: Number
+- `timestamps`: true
+
+### Assessment (Quiz/Assignment/Test) Collection
+- `_id`: ObjectId
+- `course`: ObjectId(Course)
+- `section`: ObjectId(Section) (Optional - null if it's the Final Test)
+- `title`: String
+- `type`: Enum ['quiz', 'assignment', 'final_test']
+- `content`: [Object (Question, Options, CorrectAnswer)]
+- `passingScore`: Number
+- `timestamps`: true
+
+### Payment Collection
+- `_id`: ObjectId
+- `student`: ObjectId(User)
+- `course`: ObjectId(Course)
+- `amountPaid`: Number
+- `platformFee`: Number (20% of amountPaid)
+- `mentorEarnings`: Number (80% of amountPaid)
+- `status`: Enum ['pending', 'completed', 'failed']
+- `transactionId`: String
+- `timestamps`: true
+
+### Review Collection
+- `_id`: ObjectId
+- `student`: ObjectId(User)
+- `course`: ObjectId(Course)
+- `rating`: Number (1-5)
+- `feedback`: String
+- `timestamps`: true
+
+## 3. Folder Structure
+
+The application will feature a clear separation between frontend and backend within our monorepo/workspace.
+
+### Backend Structure (MVC)
+```text
+backend/
+├── config/           # Database connections, server configs settings
+├── controllers/      # Route logic handlers (e.g., authController.js)
+├── middlewares/      # authMiddleware (JWT verify, roles), fileUpload, errorHandlers
+├── models/           # Mongoose schemas (User, Course, etc.)
+├── routes/           # Express route definitions (authRoutes, courseRoutes, etc.)
+├── utils/            # Helper functions (generateToken, cloudinaryUploader, validators)
+├── .env              # Environment variables
+├── server.js         # Main server entry point
+└── package.json
+```
+
+### Frontend Structure
+```text
+frontend/
+├── public/           # Static assets, 3D icons, manifest
+├── src/
+│   ├── assets/       # Images, styles, generic media
+│   ├── components/   # Reusable UI components (Buttons, Modals, Navbar, CourseCard)
+│   ├── context/      # State Management (AuthContext, CartContext, etc.)
+│   ├── hooks/        # Custom React hooks (useAuth, useFetch)
+│   ├── pages/        # Page components (Home, Login, Dashboard, CoursePlayer)
+│   ├── services/     # Axios configurations and API calls (apiEndpoints.js)
+│   ├── utils/        # Generic frontend helper tools
+│   ├── App.jsx       # Main application layout and routes
+│   ├── index.css     # Tailwind CSS base file (Light green & premium layout rules)
+│   └── main.jsx      # React injection file
+├── .env              # Client environment variables
+├── tailwind.config.js# Tailwind specific branding theme
+├── vite.config.js
+└── package.json
+```
+
+## 4. API Route Structure
+
+All API routes prefix: `/api/v1`
+
+### Auth Routes (Public)
+- `POST /auth/register` - Register a new user
+- `POST /auth/login` - Authenticate user & return JWT token
+- `GET /auth/profile` - Fetch logged-in user profile (Requires Auth)
+
+### Users Routes (Admin / Student)
+- `GET /users` - **Admin**: View all registered users
+- `PUT /users/:id/ban` - **Admin**: Suspend/Ban user
+- `DELETE /users/:id` - **Admin**: Delete user account
+- `POST /users/favorites/:mentorId` - **Student**: Add/remove mentor from favorites
+
+### Courses Routes
+- `GET /courses` - **Public/Student**: Browse all published courses
+- `GET /courses/:id` - **Public/Student**: View single course details
+- `POST /courses` - **Mentor**: Create a new course
+- `PUT /courses/:id` - **Mentor**: Update course details
+- `DELETE /courses/:id` - **Admin/Mentor**: Delete a course
+
+### Sections & Lessons Routes
+- `POST /courses/:courseId/sections` - **Mentor**: Add a new module/section
+- `POST /sections/:sectionId/lessons` - **Mentor**: Add lesson (Handles Cloudinary URL saves)
+- `POST /sections/:sectionId/assessments` - **Mentor**: Add module quizzes/assignments
+
+### Enrollment & Finances Routes
+- `POST /payments/purchase` - **Student**: Purchase & enroll in a course
+- `GET /payments/earnings` - **Mentor**: Fetch 80% earnings overview
+- `GET /payments/revenue` - **Admin**: View 20% platform revenue & metrics
+- `POST /courses/:id/complete` - **Student**: Mark complete & generate certificate
+
+### Review Routes
+- `POST /courses/:courseId/reviews` - **Student**: Drop a rating/feedback
+- `GET /courses/:courseId/reviews` - **Public**: Read all reviews for a course
+
+## User Review Required
+
+> [!IMPORTANT]
+> Please review the architecture, schema, folder structures, and APIs above to ensure they align perfectly with your exact expectations before we begin generating any code. I will wait for **PROMPT 2**, as instructed.
